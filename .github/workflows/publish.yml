@@ -3,6 +3,7 @@ name: Publish
 # Publishes the fasthtmlparser gem to rubygems.org on a version tag (v0.1.1) or by hand.
 # No API key is stored: rubygems.org trusted publishing (gem settings on rubygems.org, workflow publish.yml,
 # environment "release") gives this workflow a short-lived key through GitHub's OIDC token.
+# The tag is pushed by hand (the workflow does not create it).
 #
 # To release: bump VERSION in lib/fasthtmlparser/version.rb, commit, then
 #   git tag v0.1.1 && git push origin v0.1.1
@@ -20,8 +21,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     permissions:
-      contents: write # release-gem pushes the tag back when run by hand
+      contents: read
       id-token: write
+    env:
+      # the RubyGems.org account that owns the gem (romanti3172): trusted publishing asks for it to create a new gem
+      RUBYGEMS_OWNER: '256294'
+
     steps:
       - uses: actions/checkout@v7
       - uses: ruby/setup-ruby@v1
@@ -37,4 +42,19 @@ jobs:
             exit 1
           fi
       - run: bundle exec rake test
-      - uses: rubygems/release-gem@v1
+      - run: gem build fasthtmlparser.gemspec
+      # rubygems/release-gem cannot pass the owner yet: the OIDC token is exchanged for a short-lived API key here
+      - name: RubyGems.org API key from the GitHub OIDC token
+        shell: bash
+        run: |
+          jwt=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=rubygems.org" | jq -r .value)
+          body=$(jq -nc --arg jwt "$jwt" --arg owner "$RUBYGEMS_OWNER" '{jwt: $jwt, owner: $owner}')
+          response=$(curl -sS -X POST https://rubygems.org/api/v1/oidc/trusted_publisher/exchange_token             -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$body")
+          key=$(jq -r '.rubygems_api_key // empty' <<<"$response")
+          if [ -z "$key" ]; then
+            echo "::error::no API key from RubyGems.org: $response"
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "GEM_HOST_API_KEY=$key" >> "$GITHUB_ENV"
+      - run: gem push fasthtmlparser-*.gem
