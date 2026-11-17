@@ -91,7 +91,7 @@ module FastHtmlParser
     def body_bytes
       is = @inner_start
       ie = @inner_end
-      return +"".b if is.negative? || ie <= 0
+      return +"".b if is < 0 || ie <= 0
 
       src = @doc.source_bytes
       first = src.getbyte(is)
@@ -132,7 +132,7 @@ module FastHtmlParser
     # The text with the visible line structure kept: <br> and block elements give new lines, p and headings a blank
     # line, td / th a space; lines are trimmed and joined with "\n".
     def text_line_breaks
-      return +"" if @inner_start.negative? || @inner_end <= 0
+      return +"" if @inner_start < 0 || @inner_end <= 0
 
       Chars.u(TextLines.clear_tags_line_breaks(body_bytes))
     end
@@ -151,9 +151,9 @@ module FastHtmlParser
     # @api private
     def source_bytes
       src = @doc.source_bytes
-      length = if @inner_start.positive? && @inner_end.positive?
+      length = if @inner_start > 0 && @inner_end > 0
                  @inner_start - @start - 2
-               elsif @end.positive? && @end - 1 < src.bytesize && src.getbyte(@end - 1) == 47
+               elsif @end > 0 && @end - 1 < src.bytesize && src.getbyte(@end - 1) == 47
                  @end - @start - 2
                else
                  @end - @start - 1
@@ -265,7 +265,7 @@ module FastHtmlParser
 
     # The tag before this one in document order, or nil.
     def previous
-      @index.positive? ? @doc.at(@index - 1) : nil
+      @index > 0 ? @doc.at(@index - 1) : nil
     end
 
     # The first tag after the end of this one that matches the query (tags inside it are skipped), or nil.

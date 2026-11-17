@@ -81,7 +81,7 @@ module FastHtmlParser
     def reference(s, at, in_attribute)
       if s.getbyte(at) == 35
         cp, consumed = match_numeric(s, at)
-        return [nil, 0] if cp.negative?
+        return [nil, 0] if cp < 0
 
         return [Chars.utf8(cp), consumed]
       end
@@ -125,7 +125,7 @@ module FastHtmlParser
       return [-1, 0] if i == digits # "&#" / "&#x" without digits is plain text
 
       i += 1 if i < n && s.getbyte(i) == 59
-      if value.zero? || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)
+      if value == 0 || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)
         value = 0xfffd
       elsif value >= 0x80 && value <= 0x9f
         mapped = WINDOWS_1252[value - 0x80]

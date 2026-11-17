@@ -76,12 +76,12 @@ module FastHtmlParser
         end
         out << s.byteslice(from, lt - from) if lt > from
         last = skip_markup(s, lt)
-        return out if last.negative? # an unterminated tag: the rest is markup
+        return out if last < 0 # an unterminated tag: the rest is markup
 
         from = last + 1
         lt = s.index(LT, from)
       end
-      return s if from.zero?
+      return s if from == 0
 
       out << s.byteslice(from, n - from) if from < n
       out
@@ -96,7 +96,7 @@ module FastHtmlParser
 
       a = t.getbyte(0) == 32 ? 1 : 0
       z = t.bytesize - (t.getbyte(-1) == 32 ? 1 : 0)
-      a.zero? && z == t.bytesize ? t : Chars.slice(t, a, z)
+      a == 0 && z == t.bytesize ? t : Chars.slice(t, a, z)
     end
 
     # The visible text of an HTML fragment.
@@ -182,7 +182,7 @@ module FastHtmlParser
     def text(s)
       unless @out.empty?
         # nothing before the first text char: leading breaks and spaces are trimmed
-        if @pending_breaks.positive?
+        if @pending_breaks > 0
           @out << (@pending_breaks >= 2 ? "\n\n" : "\n") # at most one blank line
         elsif @pending_space
           @out << " "
@@ -259,7 +259,7 @@ module FastHtmlParser
         stop = name.index(TAG_NAME_END)
         name = name.byteslice(0, stop) if stop
         known = Parser.lookup_tag(name)
-        next if known.negative? # unknown tag: just removed
+        next if known < 0 # unknown tag: just removed
 
         case KINDS[known]
         when BREAK_LINE, BREAK_PARAGRAPH
@@ -270,7 +270,7 @@ module FastHtmlParser
           if !closing && !Chars.trim_right_ascii(tag).end_with?("/")
             # jump to the closing tag; it is removed on the next iteration
             e = Chars.index_fold(value, "</#{TagNames::NAMES[known]}", i, n)
-            i = e.negative? ? n : e
+            i = e < 0 ? n : e
           end
         end
       end

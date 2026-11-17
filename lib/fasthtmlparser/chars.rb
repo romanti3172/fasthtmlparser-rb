@@ -87,7 +87,7 @@ module FastHtmlParser
     def trim_range(s, from, to)
       len = s.bytesize
       to = len if to > len
-      from = 0 if from.negative?
+      from = 0 if from < 0
       while from < to
         c = s.getbyte(from)
         if c < 0x80
@@ -96,7 +96,7 @@ module FastHtmlParser
           from += 1
         else
           n = space_at(s, from, to)
-          break if n.zero?
+          break if n == 0
 
           from += n
         end
@@ -109,7 +109,7 @@ module FastHtmlParser
           to -= 1
         else
           n = space_before(s, to, from)
-          break if n.zero?
+          break if n == 0
 
           to -= n
         end
@@ -133,7 +133,7 @@ module FastHtmlParser
     # Trims ASCII whitespace from the end.
     def trim_right_ascii(s)
       e = s.bytesize
-      e -= 1 while e.positive? && space_byte?(s.getbyte(e - 1))
+      e -= 1 while e > 0 && space_byte?(s.getbyte(e - 1))
       e == s.bytesize ? s : s.byteslice(0, e)
     end
 
@@ -174,15 +174,15 @@ module FastHtmlParser
     # Whether s[at..] starts with the ASCII string sub, ignoring ASCII case.
     def starts_with_fold?(s, at, sub)
       n = sub.bytesize
-      return false if at.negative? || at + n > s.bytesize
+      return false if at < 0 || at + n > s.bytesize
 
-      n.zero? || s.byteslice(at, n).casecmp?(sub)
+      n == 0 || s.byteslice(at, n).casecmp?(sub)
     end
 
     # Case-insensitive (ASCII) search for sub in s[from, to); -1 when it is not there.
     def index_fold(s, sub, from, to)
       n = sub.bytesize
-      return from if n.zero?
+      return from if n == 0
       return -1 if from + n > to
 
       i = s.downcase.index(sub.downcase, from)
@@ -205,7 +205,7 @@ module FastHtmlParser
     def slice(s, from, to)
       len = s.bytesize
       to = len if to > len
-      from = 0 if from.negative?
+      from = 0 if from < 0
       from >= to ? +"".b : s.byteslice(from, to - from)
     end
 

@@ -98,7 +98,7 @@ module FastHtmlParser
           i += 1
         end
       end
-      return s if count.zero?
+      return s if count == 0
 
       out = String.new(capacity: n, encoding: Encoding::BINARY)
       i = 0
@@ -156,13 +156,13 @@ module FastHtmlParser
           next
         end
         if Chars.digit_byte?(c) || c == 43 || c == 45 || c == 46
-          return [Chars::EMPTY, raw] if i.zero?
+          return [Chars::EMPTY, raw] if i == 0
 
           i += 1
           next
         end
         if c == 58
-          raise UrlError, "missing protocol scheme" if i.zero?
+          raise UrlError, "missing protocol scheme" if i == 0
 
           return [raw.byteslice(0, i), raw.byteslice(i + 1, n - i - 1)]
         end

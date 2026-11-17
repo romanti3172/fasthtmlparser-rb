@@ -139,7 +139,7 @@ module FastHtmlParser
     def name_matches_at?(d, i)
       if @key >= 0
         k = d.keys[i]
-        return k == @key || (k.negative? && !@tag_name.empty? && Chars.equal_fold(d.customs[i], @tag_name))
+        return k == @key || (k < 0 && !@tag_name.empty? && Chars.equal_fold(d.customs[i], @tag_name))
       end
       return true if @tag_name.empty?
 

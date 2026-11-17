@@ -214,8 +214,8 @@ module FastHtmlParser
     # The shortest round-trip digits, written without an exponent (XPath has none), as JavaScript writes a number.
     def self.number_to_string(d)
       return "NaN" if d.nan?
-      return d.positive? ? "Infinity" : "-Infinity" if d.infinite?
-      return "0" if d.zero?
+      return d > 0 ? "Infinity" : "-Infinity" if d.infinite?
+      return "0" if d == 0
       return d.to_i.to_s if d == d.floor && d.abs < 1e15
 
       # the fewest significant digits that read back as d (Float#to_s), placed without an exponent
@@ -229,7 +229,7 @@ module FastHtmlParser
       end
       digits = digits.sub(/0+\z/, "")
       len = digits.size
-      out = d.negative? ? +"-" : +""
+      out = d < 0 ? +"-" : +""
       if point_at <= 0
         out << "0." << ("0" * -point_at) << digits
       elsif point_at >= len
@@ -300,18 +300,18 @@ module FastHtmlParser
     # The node test on the tag at index i, read from the arrays of the document.
     def matches_tag_at?(test, d, i)
       case test.k
-      when X::TK_NAME
+      when 0 # TK_NAME
         test.q.name_matches_at?(d, i)
-      when X::TK_PREFIX
+      when 1 # TK_PREFIX
         k = d.keys[i]
         name = k >= 0 ? TagNames::NAMES[k] : d.customs[i]
         len = test.name.bytesize
         CssQuery.element_at?(d, i) && name.bytesize >= len && Chars.equal_fold(name.byteslice(0, len), test.name)
-      when X::TK_WILDCARD, X::TK_CONTAINER
+      when 2, 7 # TK_WILDCARD, TK_CONTAINER
         CssQuery.element_at?(d, i)
-      when X::TK_NODE
+      when 3 # TK_NODE
         CssQuery.element_at?(d, i) || d.keys[i] == Parser::COMMENT
-      when X::TK_COMMENT
+      when 5 # TK_COMMENT
         d.keys[i] == Parser::COMMENT
       else
         false
@@ -328,12 +328,12 @@ module FastHtmlParser
 
     def matches_attribute?(test, attribute)
       case test.k
-      when X::TK_NAME
+      when 0 # TK_NAME
         Chars.equal_fold(attribute, test.name)
-      when X::TK_PREFIX
+      when 1 # TK_PREFIX
         len = test.name.bytesize
         attribute.bytesize >= len && Chars.equal_fold(attribute.byteslice(0, len), test.name)
-      when X::TK_WILDCARD, X::TK_NODE
+      when 2, 3 # TK_WILDCARD, TK_NODE
         true
       else
         false
@@ -342,11 +342,11 @@ module FastHtmlParser
 
     def matches?(test, x, attribute_axis)
       case x.kind
-      when XNode::ROOT
+      when 0 # ROOT
         test.k == X::TK_NODE || test.k == X::TK_CONTAINER
-      when XNode::ELEMENT, XNode::COMMENT
+      when 1, 2 # ELEMENT, COMMENT
         matches_tag?(test, x.tag)
-      when XNode::TEXT
+      when 3 # TEXT
         matches_text?(test)
       else
         return matches_attribute?(test, x.attr_name) if attribute_axis
@@ -370,7 +370,7 @@ module FastHtmlParser
         child_depth = 0
         p = 0
         text_end = doc.source_bytes.bytesize
-      elsif x.kind == XNode::ELEMENT && x.tag.inner_start.positive? && x.tag.inner_end.positive?
+      elsif x.kind == XNode::ELEMENT && x.tag.inner_start > 0 && x.tag.inner_end > 0
         t = x.tag
         first = t.index + 1
         end_ = t.end
@@ -414,7 +414,7 @@ module FastHtmlParser
       if x.kind == XNode::ROOT
         first = 0
         end_ = INF
-      elsif x.kind == XNode::ELEMENT && x.tag.inner_start.positive? && x.tag.inner_end.positive?
+      elsif x.kind == XNode::ELEMENT && x.tag.inner_start > 0 && x.tag.inner_end > 0
         first = x.tag.index + 1
         end_ = x.tag.end
       else
@@ -435,7 +435,7 @@ module FastHtmlParser
 
           # a known name: one int compare on the arrays
           k = keys[i]
-          if qk >= 0 ? k == qk || (k.negative? && named && Chars.equal_fold(d.customs[i], q.tag_name)) : q.name_matches_at?(d, i)
+          if qk >= 0 ? k == qk || (k < 0 && named && Chars.equal_fold(d.customs[i], q.tag_name)) : q.name_matches_at?(d, i)
             out << XNode.new(XNode::ELEMENT, d, d.at(i))
           end
           i += 1
@@ -461,13 +461,13 @@ module FastHtmlParser
 
     def parent_node(x)
       case x.kind
-      when XNode::ROOT
+      when 0 # ROOT
         nil
-      when XNode::TEXT, XNode::ATTRIBUTE
+      when 3, 4 # TEXT, ATTRIBUTE
         x.tag.nil? ? XNode.root(x.doc) : XNode.of_tag(x.tag)
       else
         t = x.tag
-        t.depth.positive? && t.parent_index >= 0 ? XNode.of_tag(x.doc.at(t.parent_index)) : XNode.root(x.doc)
+        t.depth > 0 && t.parent_index >= 0 ? XNode.of_tag(x.doc.at(t.parent_index)) : XNode.root(x.doc)
       end
     end
 
@@ -496,13 +496,13 @@ module FastHtmlParser
     # content.
     def string_value(x)
       case x.kind
-      when XNode::ROOT
+      when 0 # ROOT
         Text.clear_tags(x.doc.source_bytes)
-      when XNode::ELEMENT
+      when 1 # ELEMENT
         x.tag.text_bytes
-      when XNode::ATTRIBUTE
-        x.value_start.negative? ? +"".b : Decode.decode(x.doc.source_bytes.byteslice(x.value_start, x.value_length), true)
-      when XNode::TEXT
+      when 4 # ATTRIBUTE
+        x.value_start < 0 ? +"".b : Decode.decode(x.doc.source_bytes.byteslice(x.value_start, x.value_length), true)
+      when 3 # TEXT
         text = x.doc.source_bytes.byteslice(x.start, x.length)
         return Decode.normalize_newlines(text) if x.tag && Parser.raw_text?(x.tag.key)
 
@@ -570,7 +570,7 @@ module FastHtmlParser
 
     def compare_keys(a, b)
       c = a.major <=> b.major
-      c.zero? ? a.minor <=> b.minor : c
+      c == 0 ? a.minor <=> b.minor : c
     end
 
     # Puts the nodes in document order without duplicates.
@@ -639,19 +639,19 @@ module FastHtmlParser
 
     def eval_bool(e, node, position, size)
       case e.op
-      when X::E_LITERAL
+      when 0 # E_LITERAL
         !e.value.empty?
-      when X::E_AND
+      when 2 # E_AND
         eval_bool(e.l, node, position, size) && eval_bool(e.r, node, position, size)
-      when X::E_OR
+      when 3 # E_OR
         eval_bool(e.l, node, position, size) || eval_bool(e.r, node, position, size)
-      when X::E_COMPARE
+      when 4 # E_COMPARE
         compare(e.cmp, eval_expr(e.l, node, position, size), eval_expr(e.r, node, position, size))
-      when X::E_ATTR_EQUALS
+      when 8 # E_ATTR_EQUALS
         # '!=' is true when the attribute exists and differs (a missing attribute is an empty node-set)
         raw = attribute_of(node, e.name)
         !raw.nil? && Attrs.attr_equals?(raw, e.value) != e.negate
-      when X::E_ATTR_EXISTS
+      when 9 # E_ATTR_EXISTS
         !attribute_of(node, e.name).nil?
       else
         to_boolean(eval_expr(e, node, position, size))
@@ -670,27 +670,27 @@ module FastHtmlParser
 
     def eval_expr(e, node, position, size)
       case e.op
-      when X::E_LITERAL, X::E_NUMBER
+      when 0, 1 # E_LITERAL, E_NUMBER
         e.value
-      when X::E_AND, X::E_OR, X::E_COMPARE, X::E_ATTR_EQUALS, X::E_ATTR_EXISTS
+      when 2, 3, 4, 8, 9 # E_AND, E_OR, E_COMPARE, E_ATTR_EQUALS, E_ATTR_EXISTS
         eval_bool(e, node, position, size)
-      when X::E_ARITH
+      when 5 # E_ARITH
         x = eval_number(e.l, node, position, size)
         y = eval_number(e.r, node, position, size)
         case e.arith
-        when X::ARITH_ADD then x + y
-        when X::ARITH_SUB then x - y
-        when X::ARITH_MUL then x * y
-        when X::ARITH_DIV then x / y
+        when 0 then x + y # ARITH_ADD
+        when 1 then x - y # ARITH_SUB
+        when 2 then x * y # ARITH_MUL
+        when 3 then x / y # ARITH_DIV
         else fmod(x, y)
         end
-      when X::E_NEGATE
+      when 6 # E_NEGATE
         -eval_number(e.e, node, position, size)
-      when X::E_UNION
+      when 7 # E_UNION
         a = eval_nodes(e.l, node, position, size)
         b = eval_nodes(e.r, node, position, size)
         sort_unique(a + b)
-      when X::E_PATH
+      when 10 # E_PATH
         current = if e.start
                     eval_nodes(e.start, node, position, size)
                   elsif e.absolute
@@ -704,7 +704,7 @@ module FastHtmlParser
           current = apply_step(s, current)
         end
         current
-      when X::E_FILTER
+      when 11 # E_FILTER
         filter(eval_nodes(e.primary, node, position, size), e.preds)
       else
         eval_function(e, node, position, size)
@@ -713,11 +713,11 @@ module FastHtmlParser
 
     # C fmod: the remainder has the sign of x.
     def fmod(x, y)
-      return NAN if x.nan? || y.nan? || x.infinite? || y.zero?
+      return NAN if x.nan? || y.nan? || x.infinite? || y == 0
       return x if y.infinite?
 
       r = x % y
-      r -= y if !r.zero? && (r.negative? != x.negative?)
+      r -= y if r != 0 && ((r < 0) != (x < 0))
       r
     end
 
@@ -768,9 +768,9 @@ module FastHtmlParser
       x = to_number(a)
       y = to_number(b)
       case op
-      when X::OP_LT then x < y
-      when X::OP_LE then x <= y
-      when X::OP_GT then x > y
+      when 2 then x < y # OP_LT
+      when 3 then x <= y # OP_LE
+      when 4 then x > y # OP_GT
       else x >= y
       end
     end
@@ -795,11 +795,11 @@ module FastHtmlParser
       # the input nodes whose results are already collected are skipped: the work stays linear.
       unless step.positional
         case step.axis
-        when X::AXIS_DESCENDANT, X::AXIS_DESCENDANT_OR_SELF
+        when 1, 2 # AXIS_DESCENDANT, AXIS_DESCENDANT_OR_SELF
           if !matches_text?(step.test) && in_document_order?(input)
             return sort_unique(select_descendants_of_nested(step, input))
           end
-        when X::AXIS_ANCESTOR, X::AXIS_ANCESTOR_OR_SELF
+        when 5, 6 # AXIS_ANCESTOR, AXIS_ANCESTOR_OR_SELF
           return sort_unique(select_shared_ancestors(step, input))
         end
       end
@@ -824,7 +824,7 @@ module FastHtmlParser
 
           select_from(step, x, out)
           # where add_descendants stops for this tag
-          if x.kind == XNode::ELEMENT && t.inner_start.positive? && t.inner_end.positive?
+          if x.kind == XNode::ELEMENT && t.inner_start > 0 && t.inner_end > 0
             k = t.index + 1
             k += 1 while k < count && ends[k] <= t.end
             scanned_to = k if k > scanned_to
@@ -887,31 +887,31 @@ module FastHtmlParser
     def collect(step, x, out)
       test = step.test
       case step.axis
-      when X::AXIS_CHILD
+      when 0 # AXIS_CHILD
         add_children(x, test, out)
-      when X::AXIS_DESCENDANT
+      when 1 # AXIS_DESCENDANT
         add_descendants(x, test, out)
-      when X::AXIS_DESCENDANT_OR_SELF
+      when 2 # AXIS_DESCENDANT_OR_SELF
         out << x if matches?(test, x, false)
         add_descendants(x, test, out)
-      when X::AXIS_SELF
+      when 3 # AXIS_SELF
         out << x if matches?(test, x, false)
-      when X::AXIS_PARENT
+      when 4 # AXIS_PARENT
         p = parent_node(x)
         out << p if !p.nil? && matches?(test, p, false)
-      when X::AXIS_ANCESTOR, X::AXIS_ANCESTOR_OR_SELF
+      when 5, 6 # AXIS_ANCESTOR, AXIS_ANCESTOR_OR_SELF
         current = x
         out << current if step.axis == X::AXIS_ANCESTOR_OR_SELF && matches?(test, current, false)
         until (current = parent_node(current)).nil?
           out << current if matches?(test, current, false)
         end
-      when X::AXIS_FOLLOWING_SIBLING, X::AXIS_PRECEDING_SIBLING
+      when 7, 8 # AXIS_FOLLOWING_SIBLING, AXIS_PRECEDING_SIBLING
         collect_siblings(x, test, out, step.axis == X::AXIS_FOLLOWING_SIBLING)
-      when X::AXIS_FOLLOWING
+      when 9 # AXIS_FOLLOWING
         collect_following(x, test, out)
-      when X::AXIS_PRECEDING
+      when 10 # AXIS_PRECEDING
         collect_preceding(x, test, out)
-      when X::AXIS_ATTRIBUTE
+      when 11 # AXIS_ATTRIBUTE
         add_attributes(x, test, out)
       end
     end
@@ -1019,14 +1019,14 @@ module FastHtmlParser
       return v if v.nan? || v.infinite?
 
       r = v.floor.to_f
-      r.zero? && v.negative? ? -0.0 : r
+      r == 0 && v < 0 ? -0.0 : r
     end
 
     def float_ceil(v)
       return v if v.nan? || v.infinite?
 
       r = v.ceil.to_f
-      r.zero? && v.negative? ? -0.0 : r
+      r == 0 && v < 0 ? -0.0 : r
     end
 
     # Splits on Unicode whitespace and joins with one space.

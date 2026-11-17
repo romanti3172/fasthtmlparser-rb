@@ -33,7 +33,7 @@ module FastHtmlParser
       end
       i = 0
       while i < count
-        from_end[i] = children[parents[i] + 1] - position[i] + 1 if position[i].positive?
+        from_end[i] = children[parents[i] + 1] - position[i] + 1 if position[i] > 0
         i += 1
       end
       @previous = previous
@@ -45,12 +45,12 @@ module FastHtmlParser
 
     def prev(n)
       i = @previous[n.index]
-      i.negative? ? nil : @doc.at(i)
+      i < 0 ? nil : @doc.at(i)
     end
 
     def next_of(n)
       i = @next[n.index]
-      i.negative? ? nil : @doc.at(i)
+      i < 0 ? nil : @doc.at(i)
     end
 
     # [position, from_end] among the siblings of the same type
@@ -65,9 +65,9 @@ module FastHtmlParser
       keys = Array.new(count)
       i = 0
       while i < count
-        unless @position[i].zero?
+        unless @position[i] == 0
           key = d.keys[i]
-          k = [d.parents[i], key, key.negative? ? d.customs[i] : nil]
+          k = [d.parents[i], key, key < 0 ? d.customs[i] : nil]
           keys[i] = k
           pos[i] = seen[k] += 1
         end
@@ -75,7 +75,7 @@ module FastHtmlParser
       end
       i = 0
       while i < count
-        fin[i] = seen[keys[i]] - pos[i] + 1 if pos[i].positive?
+        fin[i] = seen[keys[i]] - pos[i] + 1 if pos[i] > 0
         i += 1
       end
       @types = [pos, fin]
@@ -513,7 +513,7 @@ module FastHtmlParser
       if @p < @n && css_space?(@s.getbyte(@p))
         @p += @s.getbyte(@p) == 13 && peek(1) == 10 ? 2 : 1
       end
-      return Chars::REPLACEMENT if code.zero? || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
+      return Chars::REPLACEMENT if code == 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
 
       Chars.utf8(code)
     end
@@ -599,7 +599,7 @@ module FastHtmlParser
       names = []
       list.each do |item|
         last = item.c[-1]
-        if last.key.negative? && last.name.empty?
+        if last.key < 0 && last.name.empty?
           names = nil # any element
           break
         end
@@ -755,13 +755,13 @@ module FastHtmlParser
       # n matches compound i and the part to the left of it matches the tags the combinators lead to.
       def matches_complex?(cx, i, n, scope, anchor)
         return false unless matches_compound?(cx.c[i], n, scope, anchor)
-        return cx.lead == COMB_NONE || related?(cx.lead, anchor, n) if i.zero?
+        return cx.lead == COMB_NONE || related?(cx.lead, anchor, n) if i == 0
 
         case cx.k[i - 1]
-        when COMB_CHILD
+        when 2 # COMB_CHILD
           p = n.parent
           !p.nil? && matches_complex?(cx, i - 1, p, scope, anchor)
-        when COMB_DESCENDANT
+        when 1 # COMB_DESCENDANT
           p = n.parent
           until p.nil?
             return true if matches_complex?(cx, i - 1, p, scope, anchor)
@@ -769,10 +769,10 @@ module FastHtmlParser
             p = p.parent
           end
           false
-        when COMB_ADJACENT
+        when 3 # COMB_ADJACENT
           p = n.doc.css_tree.prev(n)
           !p.nil? && matches_complex?(cx, i - 1, p, scope, anchor)
-        when COMB_SIBLING
+        when 4 # COMB_SIBLING
           t = n.doc.css_tree
           p = t.prev(n)
           until p.nil?
@@ -807,9 +807,9 @@ module FastHtmlParser
       # n stands in the combinator relation to anchor (nil: the document).
       def related?(c, anchor, n)
         case c
-        when COMB_CHILD
-          anchor.nil? ? n.parent_index.negative? : n.parent_index == anchor.index
-        when COMB_DESCENDANT
+        when 2 # COMB_CHILD
+          anchor.nil? ? n.parent_index < 0 : n.parent_index == anchor.index
+        when 1 # COMB_DESCENDANT
           return true if anchor.nil?
 
           p = n.parent
@@ -819,9 +819,9 @@ module FastHtmlParser
             p = p.parent
           end
           false
-        when COMB_ADJACENT
+        when 3 # COMB_ADJACENT
           !anchor.nil? && n.doc.css_tree.prev(n).equal?(anchor)
-        when COMB_SIBLING
+        when 4 # COMB_SIBLING
           !anchor.nil? && anchor.index < n.index && anchor.parent_index == n.parent_index && element?(anchor)
         else
           false
@@ -875,22 +875,22 @@ module FastHtmlParser
 
       def matches_simple?(s, n, scope, anchor)
         case s[0]
-        when S_ID
+        when 0 # S_ID
           Attrs.attr_equals?(Attrs.attr_raw(n, Attrs::ID), s[1])
-        when S_CLASS
+        when 1 # S_CLASS
           raw = Attrs.attr_raw(n, Attrs::CLASS)
           !raw.empty? && contains_word?(decoded(raw), s[1], false)
-        when S_ATTR
+        when 2 # S_ATTR
           matches_attribute?(n, s[1], s[2], s[3], s[4])
-        when S_NTH
+        when 3 # S_NTH
           matches_nth?(n, s[1], s[2], s[3], s[4], s[5], scope, anchor)
-        when S_NOT
+        when 4 # S_NOT
           !matches_list?(s[1], n, scope, anchor)
-        when S_IS
+        when 5 # S_IS
           matches_list?(s[1], n, scope, anchor)
-        when S_HAS
+        when 6 # S_HAS
           has_match?(s[1], n, scope)
-        when S_CONTAINS
+        when 7 # S_CONTAINS
           n.text_bytes.include?(s[1])
         else
           matches_pseudo?(s[1], n, scope)
@@ -911,18 +911,18 @@ module FastHtmlParser
         actual = decoded(raw)
         vl = v.bytesize
         case op
-        when OP_EQUALS
+        when 1 # OP_EQUALS
           equal?(actual, v, fold)
-        when OP_INCLUDES
+        when 2 # OP_INCLUDES
           !CSS_SPACE_RE.match?(v) && contains_word?(actual, v, fold)
-        when OP_DASH
+        when 3 # OP_DASH
           equal?(actual, v, fold) ||
             (actual.bytesize > vl && actual.getbyte(vl) == 45 && equal?(actual.byteslice(0, vl), v, fold))
-        when OP_PREFIX
+        when 4 # OP_PREFIX
           !v.empty? && actual.bytesize >= vl && equal?(actual.byteslice(0, vl), v, fold)
-        when OP_SUFFIX
+        when 5 # OP_SUFFIX
           !v.empty? && actual.bytesize >= vl && equal?(actual.byteslice(actual.bytesize - vl, vl), v, fold)
-        when OP_SUBSTRING
+        when 6 # OP_SUBSTRING
           return false if v.empty?
           return actual.include?(v) unless fold
           return actual.downcase(:ascii).include?(v.downcase(:ascii)) if v.ascii_only?
@@ -954,7 +954,7 @@ module FastHtmlParser
         return false if position <= 0 # not an element
 
         # position = a*n + b for some n >= 0
-        return position == b if a.zero?
+        return position == b if a == 0
 
         diff = position - b
         (diff % a).zero? && (diff / a) >= 0
@@ -962,7 +962,7 @@ module FastHtmlParser
 
       # the first top-level element: <html> on a page
       def root?(n)
-        n.parent_index.negative? && n.doc.css_tree.prev(n).nil?
+        n.parent_index < 0 && n.doc.css_tree.prev(n).nil?
       end
 
       # No child elements and no text; comments are allowed.
@@ -987,17 +987,17 @@ module FastHtmlParser
       def matches_pseudo?(kind, n, scope)
         name = n.name_bytes
         case kind
-        when PSEUDO_ROOT then root?(n)
-        when PSEUDO_SCOPE then scope.nil? ? root?(n) : n.equal?(scope)
-        when PSEUDO_EMPTY then empty_element?(n)
-        when PSEUDO_LINK then (name == "a" || name == "area") && Attrs.has_attribute?(n, "href")
-        when PSEUDO_CHECKED
+        when 0 then root?(n) # PSEUDO_ROOT
+        when 1 then scope.nil? ? root?(n) : n.equal?(scope) # PSEUDO_SCOPE
+        when 2 then empty_element?(n) # PSEUDO_EMPTY
+        when 3 then (name == "a" || name == "area") && Attrs.has_attribute?(n, "href") # PSEUDO_LINK
+        when 4 # PSEUDO_CHECKED
           (name == "input" && Attrs.has_attribute?(n, "checked")) ||
             (name == "option" && Attrs.has_attribute?(n, "selected"))
-        when PSEUDO_DISABLED then FORM_CONTROLS.key?(name) && Attrs.has_attribute?(n, "disabled")
-        when PSEUDO_ENABLED then FORM_CONTROLS.key?(name) && !Attrs.has_attribute?(n, "disabled")
-        when PSEUDO_REQUIRED then INPUTS.key?(name) && Attrs.has_attribute?(n, "required")
-        when PSEUDO_OPTIONAL then INPUTS.key?(name) && !Attrs.has_attribute?(n, "required")
+        when 5 then FORM_CONTROLS.key?(name) && Attrs.has_attribute?(n, "disabled") # PSEUDO_DISABLED
+        when 6 then FORM_CONTROLS.key?(name) && !Attrs.has_attribute?(n, "disabled") # PSEUDO_ENABLED
+        when 7 then INPUTS.key?(name) && Attrs.has_attribute?(n, "required") # PSEUDO_REQUIRED
+        when 8 then INPUTS.key?(name) && !Attrs.has_attribute?(n, "required") # PSEUDO_OPTIONAL
         else false
         end
       end

@@ -48,7 +48,7 @@ module FastHtmlParser
         ss.skip(ATTR_NAME)
         @pos = ss.pos < e ? ss.pos : e
         @name_length = @pos - @name_start
-        if @name_length.zero?
+        if @name_length == 0
           @pos += 1 # a stray '=': skip it
           next
         end
@@ -62,7 +62,7 @@ module FastHtmlParser
     end
 
     def raw_value
-      @value_start.negative? ? +"".b : @src.byteslice(@value_start, @value_length)
+      @value_start < 0 ? +"".b : @src.byteslice(@value_start, @value_length)
     end
   end
 
@@ -109,7 +109,7 @@ module FastHtmlParser
         return false if i.nil?
 
         after = i + cl
-        if (i.zero? || Chars.space_byte?(lv.getbyte(i - 1))) && (after == vl || Chars.space_byte?(lv.getbyte(after)))
+        if (i == 0 || Chars.space_byte?(lv.getbyte(i - 1))) && (after == vl || Chars.space_byte?(lv.getbyte(after)))
           return true
         end
 
@@ -175,10 +175,10 @@ module FastHtmlParser
         # a word the scanner has passed was inside a value: the next one takes its place
         while pos < s.name_start
           pos = next_word(tag, start, attribute, pos + 1)
-          return +"".b if pos.negative?
+          return +"".b if pos < 0
         end
         if pos == s.name_start && s.name_length == alen
-          return s.value_start.negative? ? +"".b : src.byteslice(s.value_start, s.value_length)
+          return s.value_start < 0 ? +"".b : src.byteslice(s.value_start, s.value_length)
         end
       end
       +"".b
@@ -209,7 +209,7 @@ module FastHtmlParser
       return false unless Chars.space_byte?(tag.getbyte(pos - 1))
 
       e = pos
-      e -= 1 while e.positive? && Chars.space_byte?(tag.getbyte(e - 1))
+      e -= 1 while e > 0 && Chars.space_byte?(tag.getbyte(e - 1))
       return false if tag.getbyte(e - 1) == 61
 
       # Not inside a quoted value: it is enough that the last quote of each kind before the word does not open a value.
@@ -218,8 +218,8 @@ module FastHtmlParser
         next if i.nil?
 
         j = i
-        j -= 1 while j.positive? && Chars.space_byte?(tag.getbyte(j - 1))
-        return false if j.positive? && tag.getbyte(j - 1) == 61
+        j -= 1 while j > 0 && Chars.space_byte?(tag.getbyte(j - 1))
+        return false if j > 0 && tag.getbyte(j - 1) == 61
       end
       true
     end
@@ -236,7 +236,7 @@ module FastHtmlParser
 
     # The position of the '>' that ends the opening tag.
     def open_tag_end(n)
-      end_ = n.inner_start.positive? && n.inner_end.positive? ? n.inner_start - 1 : n.end
+      end_ = n.inner_start > 0 && n.inner_end > 0 ? n.inner_start - 1 : n.end
       len = n.doc.source_bytes.bytesize
       end_ < len ? end_ : len
     end

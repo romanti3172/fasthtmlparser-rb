@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # the tests (the .NET conformance data included) on the oldest supported Ruby and the current versions
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ruby: ['3.2', '3.3', '3.4', '4.0']
+        include:
+          - os: windows-latest
+            ruby: '4.0'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - run: bundle exec rake test
+      - run: gem build fasthtmlparser.gemspec
+
+  # the tables and shortcuts generated from the C# sources are up to date
+  generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: romanti3172/z3l.FastHtmlParser
+          path: z3l.FastHtmlParser
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - run: ruby tools/gen.rb z3l.FastHtmlParser/src/z3l.FastHtmlParser
+      - run: git diff --exit-code -- lib
+
+  # the benchmark runs and every scraper gives the same records (short timings, not published)
+  bench:
+    runs-on: ubuntu-latest
+    env:
+      RUBY_YJIT_ENABLE: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+          bundler-cache: true
+          working-directory: bench
+      - run: bundle exec ruby bench.rb 0.05
+        working-directory: bench
