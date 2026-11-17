@@ -107,6 +107,7 @@ class ApiTest < Minitest::Test
     assert a.has_attr?("hidden")
     refute a.has_attr?("missing")
     assert a.has_class?("one") && a.has_class?("TWO") && !a.has_class?("on")
+    assert HtmlDocument.parse("<b class=Main>x</b>").node(0).has_class?("main"), "a class of the same length, other case"
     assert_equal %w[href title data-x id CLASS hidden], a.attrs.map(&:first)
     assert a.is_css?("[hidden]") && a.is_css?("a#main.One")
     assert_equal "a href=/p?a=1&copy=2 title=\"see id=5\" data-x='<b>' id=main CLASS=\"One two\" hidden", a.source

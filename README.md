@@ -142,7 +142,31 @@ the z3l.FastHtmlParser package; it is shared with the other ports.
 
 ## Benchmarks
 
-BENCHMARKS
+`cd bench && bundle install && bundle exec ruby bench.rb` (Ruby 4.0.9, AMD Ryzen 7 3800X, Windows; median time per call
+after a one-second warm-up). The RubyInstaller builds for Windows have no YJIT, so these numbers are for the plain
+interpreter; with YJIT (Linux, macOS) the pure-Ruby parser gains more than the C parsers it is compared with. Nokogiri
+1.19.7 parses with libxml2 2.13 (`Nokogiri::HTML4`) or with gumbo, the HTML5 parser (`Nokogiri::HTML5`); Oga 3.5 is a
+pure-Ruby parser. Before timing, the benchmark checks that every library extracts exactly the same records.
+
+Parse a page:
+
+| Page | fasthtmlparser | Nokogiri HTML4 | Nokogiri HTML5 | Oga |
+|---|---:|---:|---:|---:|
+| quotes, 11 KB | **456 μs** | 526 μs | 802 μs | 3.14 ms |
+| laptops, 38 KB | **1.40 ms** | 1.79 ms | 2.38 ms | 10.11 ms |
+| books, 51 KB | 1.54 ms | **1.45 ms** | 3.23 ms | 10.28 ms |
+| books x10, 510 KB | 15.47 ms | **14.44 ms** | 31.01 ms | 107.99 ms |
+| books without `</li>` `</p>` | 1.97 ms | **1.56 ms** | 2.83 ms | 9.62 ms |
+
+Scrape a page: parse and extract the records. Books: 20 × title, price, rating; quotes: 10 × text, author, tags.
+
+| Task | fasthtmlparser `find` | CSS | XPath | Nokogiri HTML4 CSS | HTML4 XPath | HTML5 CSS | HTML5 XPath | Oga CSS | Oga XPath |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| books | **2.26 ms** | 2.48 ms | 3.05 ms | 3.13 ms | 2.74 ms | 4.57 ms | 3.88 ms | 13.86 ms | 14.28 ms |
+| quotes | **834 μs** | 881 μs | 1.21 ms | 1.32 ms |  | 1.55 ms |  | 4.66 ms |  |
+
+A pure-Ruby parser that keeps only positions parses about as fast as libxml2 and 2x faster than gumbo; extracting the
+records is where it wins, because nothing is built that is not asked for. The full output is in `bench-results.md`.
 
 ## Development
 
