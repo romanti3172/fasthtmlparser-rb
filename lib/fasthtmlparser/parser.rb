@@ -86,9 +86,8 @@ module FastHtmlParser
 
     # Inside a tag only '<', '=' and '>' matter; a quoted value after '=' may contain '<' and '>' (data-x="<p>").
     TAG_BODY = /(?>[^<>=]++|=[\t-\r ]*+(?>"[^"]*+"|'[^']*+')?)*+/n
-    # A tag name ends at whitespace or '/': <br/> is "br", as <br /> is.
-    NAME = %r{[^\t-\r />]*+}n
-    # The start of a name, as far as it is read on the way to the end of the tag (what follows is read by TAG_BODY).
+    # A tag name ends at whitespace or '/' (<br/> is "br", as <br /> is). On the way to the end of the tag it is read
+    # up to '<', '=' or '>' too (TAG_BODY reads what follows); no match when it runs into '=' (read byte by byte then).
     NAME_PART = %r{[^\t-\r /<=>]*+(?!=)}n
     LT = "<"
     RAW_TEXT_END_PATTERNS = {}

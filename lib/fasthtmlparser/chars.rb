@@ -20,8 +20,6 @@ module FastHtmlParser
     SPACE_RUNS = Regexp.new("#{UNICODE_SPACE}+".b, Regexp::NOENCODING)
     # the first bytes of every whitespace char
     SPACE_BYTE = /[\t-\r \xC2\xE1-\xE3]/n
-    NON_ASCII = /[\x80-\xFF]/n
-    ASCII_SPACES = /[\t-\r ]+/n
     CONTINUATION_BYTES = "\x80-\xBF".b.freeze
     FOUR_BYTE_LEADS = "\xF0-\xF7".b.freeze
 

@@ -18,8 +18,6 @@ module FastHtmlParser
     MAX_LEGACY_NAME = Entities::MAX_LEGACY_NAME
     AMP = "&"
     CR = "\r"
-    NEEDS_DECODING = /[&\r]/n
-    ALNUM_RUN = /[0-9A-Za-z]{0,#{MAX_NAME + 1}}/n
 
     module_function
 
