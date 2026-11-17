@@ -1,0 +1,40 @@
+name: Publish
+
+# Publishes the fasthtmlparser gem to rubygems.org on a version tag (v0.1.1) or by hand.
+# No API key is stored: rubygems.org trusted publishing (gem settings on rubygems.org, workflow publish.yml,
+# environment "release") gives this workflow a short-lived key through GitHub's OIDC token.
+#
+# To release: bump VERSION in lib/fasthtmlparser/version.rb, commit, then
+#   git tag v0.1.1 && git push origin v0.1.1
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write # release-gem pushes the tag back when run by hand
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+          bundler-cache: true
+      - name: Version
+        shell: bash
+        run: |
+          v=$(ruby -r ./lib/fasthtmlparser/version -e 'print FastHtmlParser::VERSION')
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the version $v in lib/fasthtmlparser/version.rb"
+            exit 1
+          fi
+      - run: bundle exec rake test
+      - uses: rubygems/release-gem@v1

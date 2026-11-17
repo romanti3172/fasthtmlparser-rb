@@ -177,7 +177,8 @@ ruby tools/gen.rb ../z3l.FastHtmlParser/src/z3l.FastHtmlParser   # tag, attribut
 cd bench && bundle install && bundle exec ruby bench.rb # benchmarks (they load the library from ..)
 ```
 
-Releases: `gem build fasthtmlparser.gemspec` and `gem push`; the version is in `lib/fasthtmlparser/version.rb`.
+Releases: bump `VERSION` in `lib/fasthtmlparser/version.rb`, commit, push a tag `v<version>`; `.github/workflows/publish.yml`
+publishes the gem through rubygems.org trusted publishing (no API key stored).
 
 - `lib/fasthtmlparser/parser.rb`: the scanner and the HTML5 optional-end-tag rules (port of `ParsingCore.cs`); it
   writes the tags into parallel arrays of the document
