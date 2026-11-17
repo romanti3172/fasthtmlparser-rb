@@ -1,0 +1,8 @@
+Gemfile.lock
+bench/Gemfile.lock
+/pkg/
+/vendor/
+/.bundle/
+bench/.bundle/
+bench/vendor/
+*.gem
