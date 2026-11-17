@@ -78,7 +78,9 @@ module FastHtmlParser
     NAME_AFTER = Array.new(256, false)
     " \t\n\v\f\r=/>".each_byte { |c| NAME_AFTER[c] = true }
     NAME_AFTER.freeze
-    UNQUOTED_VALUE = /[^\t-\r ]*+/n
+    NAME_SIZES = TagNames::NAMES.map(&:bytesize).freeze
+    DQ = '"'
+    SQ = "'"
 
     module_function
 
@@ -122,12 +124,8 @@ module FastHtmlParser
       # a comment has no attributes, whatever its text looks like
       return +"".b if attribute.empty? || n.key == Parser::COMMENT
 
-      src = n.doc.source_bytes
-      start = n.start
-      end_ = n.inner_start.positive? && n.inner_end.positive? ? n.inner_start - 1 : n.end
       # the opening tag: "<name attributes", without the closing '>', in lower case
-      tag = src.byteslice(start, end_ - start)
-      tag.downcase!(:ascii)
+      tag = n.lower_tag
       length = tag.bytesize
 
       # The first place where the name stands as a word of its own. Most tags have none.
@@ -141,24 +139,32 @@ module FastHtmlParser
       end
       return +"".b if p.nil?
 
+      src = n.doc.source_bytes
+      start = n.start
       # That word is the attribute unless it is inside the value of another one (title="see id=5", x= id).
       # Nearly always that is ruled out at once, and the value is read in place.
-      if (n.key >= 0 && p == TagNames::NAMES[n.key].bytesize + 2) || name_for_sure?(tag, p)
+      key = n.key
+      if (key >= 0 && p == NAME_SIZES[key] + 2) || name_for_sure?(tag, p)
         q = p + alen
-        q += 1 while q < length && Chars.space_byte?(tag.getbyte(q))
+        while q < length && ((c = tag.getbyte(q)) == 32 || (c >= 9 && c <= 13))
+          q += 1
+        end
         return +"".b if q >= length || tag.getbyte(q) != 61 # no value
 
         q += 1
-        q += 1 while q < length && Chars.space_byte?(tag.getbyte(q))
+        while q < length && ((c = tag.getbyte(q)) == 32 || (c >= 9 && c <= 13))
+          q += 1
+        end
         return +"".b if q >= length
 
-        c = tag.getbyte(q)
         if c == 34 || c == 39
-          close = tag.index(c == 34 ? '"' : "'", q + 1)
+          close = tag.index(c == 34 ? DQ : SQ, q + 1)
           return close.nil? ? src.byteslice(start + q + 1, length - q - 1) : src.byteslice(start + q + 1, close - q - 1)
         end
         v = q
-        v += 1 while v < length && !Chars.space_byte?(tag.getbyte(v))
+        while v < length && !((c = tag.getbyte(v)) == 32 || (c >= 9 && c <= 13))
+          v += 1
+        end
         return src.byteslice(start + q, v - q)
       end
       pos = start + p

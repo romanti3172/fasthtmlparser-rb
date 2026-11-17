@@ -1,0 +1,8 @@
+# frozen_string_literal: true
+
+# The benchmark's own dependencies: the library itself has none.
+source "https://rubygems.org"
+
+gem "fasthtmlparser", path: ".."
+gem "nokogiri", "~> 1.19"
+gem "oga", "~> 3.5"

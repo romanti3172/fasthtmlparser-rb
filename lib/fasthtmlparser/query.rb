@@ -16,86 +16,108 @@ module FastHtmlParser
     attr_reader :tag_name
 
     # @api private Use Query.by or Query.any.
-    def initialize(key, tag_name)
+    def initialize(key, tag_name, plain, cls, id, attr_name, attr_value, text, id_starts_with, text_starts_with, body,
+                   body_starts_with, source)
       @key = key
       @tag_name = tag_name
-      @class = nil
-      @id = nil
-      @attr_name = nil
-      @attr_value = nil
-      @text = nil
-      @id_starts_with = nil
-      @text_starts_with = nil
-      @body = nil
-      @body_starts_with = nil
-      @source = nil
-      @plain = true
+      @class = cls
+      @id = id
+      @attr_name = attr_name
+      @attr_value = attr_value
+      @text = text
+      @id_starts_with = id_starts_with
+      @text_starts_with = text_starts_with
+      @body = body
+      @body_starts_with = body_starts_with
+      @source = source
+      @plain = plain # no criteria but the name
+      freeze
     end
 
     # Selects tags by name, case-insensitively: a Tag symbol (:div), or any name as a String or Symbol.
     def self.by(name)
       if name.is_a?(Symbol)
-        k = SYMBOL_KEYS[name]
-        return new(k, Chars::EMPTY).freeze if k
+        q = BY_SYMBOL[name]
+        return q if q
 
         name = name.to_s
       end
-      n = Chars.b(name).dup.freeze
-      new(Parser.lookup_tag(n), n).freeze
+      n = Query.value(name)
+      new(Parser.lookup_tag(n), n, true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
     end
 
-    ANY = new(-1, Chars::EMPTY).freeze
+    ANY = new(-1, Chars::EMPTY, true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    BY_SYMBOL = SYMBOL_KEYS.transform_values do |k|
+      new(k, Chars::EMPTY, true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+    end.freeze
 
     # Selects every tag.
     def self.any
       ANY
     end
 
+    # @api private A criterion as the library compares it: frozen, binary when it is not ASCII.
+    def self.value(s)
+      return s if s.frozen? && s.ascii_only?
+
+      s = s.to_s unless s.is_a?(String)
+      return s.dup.freeze if s.ascii_only?
+
+      s.b.freeze
+    end
+
     # Adds a class criterion: one of the space-separated classes, case-insensitive.
     def has_class(cls)
-      with(:@class, cls)
+      Query.new(@key, @tag_name, false, Query.value(cls), @id, @attr_name, @attr_value, @text, @id_starts_with,
+                @text_starts_with, @body, @body_starts_with, @source)
     end
 
     # Adds an id criterion.
     def id(id)
-      with(:@id, id)
+      Query.new(@key, @tag_name, false, @class, Query.value(id), @attr_name, @attr_value, @text, @id_starts_with,
+                @text_starts_with, @body, @body_starts_with, @source)
     end
 
     # Adds an attribute criterion: the decoded value equals value.
     def attr(name, value)
-      q = with(:@attr_value, value, frozen: false)
-      q.instance_variable_set(:@attr_name, Chars.b(name).downcase(:ascii).freeze)
-      q.freeze
+      Query.new(@key, @tag_name, false, @class, @id, Query.value(name).downcase(:ascii).freeze, Query.value(value), @text,
+                @id_starts_with, @text_starts_with, @body, @body_starts_with, @source)
     end
 
     # Adds a visible-text criterion (see HtmlNode#text).
     def text(text)
-      with(:@text, text)
+      Query.new(@key, @tag_name, false, @class, @id, @attr_name, @attr_value, Query.value(text), @id_starts_with,
+                @text_starts_with, @body, @body_starts_with, @source)
     end
 
     # Adds a criterion: the decoded id starts with prefix.
     def id_starts_with(prefix)
-      with(:@id_starts_with, prefix)
+      Query.new(@key, @tag_name, false, @class, @id, @attr_name, @attr_value, @text, Query.value(prefix),
+                @text_starts_with, @body, @body_starts_with, @source)
     end
 
     # Adds a criterion: the visible text starts with prefix.
     def text_starts_with(prefix)
-      with(:@text_starts_with, prefix)
+      Query.new(@key, @tag_name, false, @class, @id, @attr_name, @attr_value, @text, @id_starts_with, Query.value(prefix),
+                @body, @body_starts_with, @source)
     end
 
     # Adds a criterion: the inner HTML (trimmed) equals body.
     def body(body)
-      with(:@body, body)
+      Query.new(@key, @tag_name, false, @class, @id, @attr_name, @attr_value, @text, @id_starts_with, @text_starts_with,
+                Query.value(body), @body_starts_with, @source)
     end
 
     # Adds a criterion: the inner HTML (trimmed) starts with prefix.
     def body_starts_with(prefix)
-      with(:@body_starts_with, prefix)
+      Query.new(@key, @tag_name, false, @class, @id, @attr_name, @attr_value, @text, @id_starts_with, @text_starts_with,
+                @body, Query.value(prefix), @source)
     end
 
     # Adds a criterion: the opening tag without '<' and '>' (see HtmlNode#source) equals source.
     def source(source)
-      with(:@source, source)
+      Query.new(@key, @tag_name, false, @class, @id, @attr_name, @attr_value, @text, @id_starts_with, @text_starts_with,
+                @body, @body_starts_with, Query.value(source))
     end
 
     # Whether the tag matches every criterion; false for nil.
@@ -146,13 +168,6 @@ module FastHtmlParser
     end
 
     private
-
-    def with(ivar, value, frozen: true)
-      q = dup
-      q.instance_variable_set(ivar, Chars.b(value).dup.freeze)
-      q.instance_variable_set(:@plain, false)
-      frozen ? q.freeze : q
-    end
 
     def scan(d, from, end_, first_only)
       out = []

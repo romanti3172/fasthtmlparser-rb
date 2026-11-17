@@ -88,6 +88,9 @@ module FastHtmlParser
     TAG_BODY = /(?>[^<>=]++|=[\t-\r ]*+(?>"[^"]*+"|'[^']*+')?)*+/n
     # A tag name ends at whitespace or '/': <br/> is "br", as <br /> is.
     NAME = %r{[^\t-\r />]*+}n
+    # The start of a name, as far as it is read on the way to the end of the tag (what follows is read by TAG_BODY).
+    NAME_PART = %r{[^\t-\r /<=>]*+(?!=)}n
+    LT = "<"
     RAW_TEXT_END_PATTERNS = {}
     RAW_TEXT_ENDS.each { |e| RAW_TEXT_END_PATTERNS[e] = Regexp.new(Regexp.escape(e), Regexp::IGNORECASE | Regexp::NOENCODING) if e }
     RAW_TEXT_END_PATTERNS.freeze
@@ -184,7 +187,7 @@ module FastHtmlParser
       return Array.new(8) { [] } unless src.include?("<")
 
       st = new(src)
-      st.scan(false, 0, src.bytesize)
+      st.scan_fast
       st.finish
     end
 
@@ -229,11 +232,153 @@ module FastHtmlParser
       count = @count
       out.each { |a| a.slice!(count..) } if count < @key.size
       inner_starts = @inner_starts
-      @inner_ends.each_with_index { |e, k| inner_starts[k] = 0 if e.zero? } # not closed: no body
+      @inner_ends.each_with_index { |e, k| inner_starts[k] = 0 if e == 0 } # not closed: no body
       out
     end
 
+    # The first scan of the whole page in fast mode: what scan(false, 0, size) does, with the common cases inline and
+    # the state in local variables (a method call and an instance variable cost several plain operations). Whatever
+    # the inline code does not handle (comments, custom names, the optional-end-tag rules, a misnested end tag, an
+    # unfinished tag) is handed to the general code with the state written back.
+    def scan_fast
+      src = @src
+      ss = @ss
+      to = src.bytesize
+      keys = @key
+      customs = @customs
+      parents = @parents
+      depths = @depth
+      starts = @starts
+      ends = @ends
+      inner_starts = @inner_starts
+      inner_ends = @inner_ends
+      prev_open = @prev_open
+      self_closed = @self_closed
+      stack = @stack
+      open_in_list = @open_in_list
+      is_xml = @is_xml
+      empty = Chars::EMPTY
+      count = 0
+      stack_top = 0
+      last_open = -1
+      open_p = 0
+      i = 0
+      while i < to
+        lt = src.index(LT, i)
+        break if lt.nil?
+
+        i = lt
+        break if i + 1 >= to
+
+        c = src.getbyte(i + 1)
+        tag_start = i + 1
+        ss.pos = tag_start
+        if c == 47
+          p = tag_start + ss.skip(TAG_BODY)
+          if p < to && src.getbyte(p) == 62
+            name = src.byteslice(tag_start + 1, p - tag_start - 1)
+            key = KEYS[name]
+            j = last_open
+            if key && j >= 0 && keys[j] == key && stack_top > 0 && stack[stack_top - 1] == j
+              # the end tag of the innermost open tag
+              inner_ends[j] = tag_start - 2
+              ends[j] = p
+              stack_top -= 1
+              open_p -= 1 if key == P
+              open_in_list[key] -= 1
+              last_open = prev_open[j]
+              i = p + 1
+              next
+            end
+          end
+        else
+          l = c | 0x20
+          unless (l >= 97 && l <= 122) || c == 33 || c == 63
+            i += 1
+            next
+          end
+          if c != 33
+            name = ss.scan(NAME_PART)
+            p = ss.pos
+            p += ss.skip(TAG_BODY) if src.getbyte(p) != 62
+            last = p < to ? src.getbyte(p - 1) : 0
+            if name && p < to && src.getbyte(p) == 62 && last < 0x80 && (key = KEYS[name] || (name.bytesize <= 32 && KEYS[name.downcase]))
+              flags = is_xml ? 0 : FLAGS[key]
+              if flags & F_RULE == 0 || stack_top == 0 || (top = keys[stack[stack_top - 1]]) < 0 || !RULES[key].t[top]
+                if open_p == 0 || flags & F_CLOSES_P == 0
+                  # a known tag that ends no open tag
+                  if stack_top > 0
+                    parent = stack[stack_top - 1]
+                    depth = depths[parent] + 1
+                  else
+                    parent = -1
+                    depth = 0
+                  end
+                  customs[count] = empty
+                  parents[count] = parent
+                  starts[count] = i
+                  ends[count] = p
+                  inner_starts[count] = p + 1
+                  inner_ends[count] = 0
+                  keys[count] = key
+                  depths[count] = depth
+                  if flags & F_VOID != 0
+                    prev_open[count] = -1
+                    self_closed[count] = false
+                    count += 1
+                    i = p + 1
+                    next
+                  end
+                  self_closing = last == 47 || (last <= 32 && self_closing?(tag_start, p))
+                  self_closed[count] = self_closing
+                  prev_open[count] = last_open
+                  last_open = count
+                  open_in_list[key] += 1
+                  count += 1
+                  i = p + 1
+                  next if self_closing
+
+                  if stack_top < MAX_DEPTH
+                    stack[stack_top] = count - 1
+                    stack_top += 1
+                    open_p += 1 if key == P
+                  end
+                  # <script>, <style>, ...: continue right before the matching end tag
+                  i = Parser.find_raw_text_end(src, p + 1, RAW_TEXT_ENDS[key], to) if flags & F_RAW_TEXT != 0
+                  next
+                end
+              end
+            end
+          end
+        end
+        # anything else: the general code, with the state written back
+        @count = count
+        @stack_top = stack_top
+        @last_open = last_open
+        @open_p = open_p
+        stop = scan_one(i, to)
+        count = @count
+        stack_top = @stack_top
+        last_open = @last_open
+        open_p = @open_p
+        if stop < 0
+          @tag_started = true
+          @tag_start = i + 1
+          return
+        end
+        i = stop
+      end
+      @count = count
+      @stack_top = stack_top
+      @last_open = last_open
+      @open_p = open_p
+      @tag_started = false
+    end
+
     # Parses src[from, to) (from is outside a tag), adding tags at count. Tags still open at to stay on the stack.
+    # Every String method call costs about as much as twenty plain operations, so the common cases are read with as
+    # few of them as possible: the name of a start tag and the rest of the tag by two regexps, the name of an end tag
+    # looked up untrimmed (a name with spaces around it is not a tag name and takes the slow way).
     def scan(rules, from, to)
       src = @src
       ss = @ss
@@ -242,53 +387,105 @@ module FastHtmlParser
       i = from
       while i < to
         # Outside a tag only '<' matters: jump to it.
-        lt = src.index("<", i)
+        lt = src.index(LT, i)
         break if lt.nil? || lt >= to
 
         i = lt
         break if i + 1 >= to
 
         c = src.getbyte(i + 1)
+        tag_start = i + 1
+        if c == 47
+          # an end tag; inside a tag only '<', '=' and '>' matter
+          ss.pos = tag_start
+          p = tag_start + ss.skip(TAG_BODY)
+          p = scan_tag_slowly(tag_start, to) if p >= to
+          if p < 0
+            tag_started = true
+            break
+          end
+          if src.getbyte(p) == 60
+            # An unfinished tag: start over at this '<' (it may also start a comment).
+            i = p
+            next
+          end
+          end_tag(rules, tag_start, p)
+          i = p + 1
+          next
+        end
+
+        # As in HTML5, '<' starts markup only before a letter, '/', '!' or '?': "a < b" is text.
+        l = c | 0x20
+        unless (l >= 97 && l <= 122) || c == 33 || c == 63
+          i += 1
+          next
+        end
         if c == 33 && i + 4 <= to && src.getbyte(i + 2) == 45 && src.getbyte(i + 3) == 45
           # <!-- ... -->: one "!--" tag; its content is not markup, it does not nest anything.
           i = comment(i, to) + 1
           next
         end
 
-        # As in HTML5, '<' starts markup only before a letter, '/', '!' or '?': "a < b" is text.
-        unless ((c | 0x20) >= 97 && (c | 0x20) <= 122) || c == 47 || c == 33 || c == 63
-          i += 1
-          next
-        end
-
-        tag_start = i + 1
-        # Inside a tag only '<', '=' and '>' matter.
         ss.pos = tag_start
-        ss.skip(TAG_BODY)
+        # nil when the name runs into '=': then the name is read byte by byte
+        name = ss.scan(NAME_PART)
         p = ss.pos
+        # a tag without attributes ends right after its name
+        p += ss.skip(TAG_BODY) if src.getbyte(p) != 62
         p = scan_tag_slowly(tag_start, to) if p >= to
-        if p.negative?
+        if p < 0
           tag_started = true
           break
         end
         if src.getbyte(p) == 60
-          # An unfinished tag: start over at this '<' (it may also start a comment).
           i = p
           next
         end
-        # '>'
-        i = if src.getbyte(tag_start) == 47
-              end_tag(rules, tag_start, p)
-              p + 1
-            else
-              start_tag(rules, tag_start, p, to) + 1
-            end
+        i = start_tag(rules, tag_start, p, to, c, name) + 1
       end
       @tag_started = tag_started
       @tag_start = tag_start
     end
 
     private
+
+    # One step of scan(false, ...) at the '<' at i: the position to go on from, or -1 for a tag that does not end.
+    def scan_one(i, to)
+      src = @src
+      ss = @ss
+      c = src.getbyte(i + 1)
+      tag_start = i + 1
+      ss.pos = tag_start
+      if c == 47
+        p = tag_start + ss.skip(TAG_BODY)
+        p = scan_tag_slowly(tag_start, to) if p >= to
+        return -1 if p < 0
+        return p if src.getbyte(p) == 60
+
+        end_tag(false, tag_start, p)
+        return p + 1
+      end
+      l = c | 0x20
+      return i + 1 unless (l >= 97 && l <= 122) || c == 33 || c == 63
+      return comment(i, to) + 1 if c == 33 && i + 4 <= to && src.getbyte(i + 2) == 45 && src.getbyte(i + 3) == 45
+
+      name = ss.scan(NAME_PART)
+      p = ss.pos
+      p += ss.skip(TAG_BODY) if src.getbyte(p) != 62
+      p = scan_tag_slowly(tag_start, to) if p >= to
+      return -1 if p < 0
+      return p if src.getbyte(p) == 60
+
+      start_tag(false, tag_start, p, to, c, name) + 1
+    end
+
+    # Whether the opening tag that ends at gt (with whitespace before '>') ends with "/".
+    def self_closing?(tag_start, gt)
+      src = @src
+      e = gt
+      e -= 1 while e > tag_start && Chars.space_byte?(src.getbyte(e - 1))
+      e > tag_start && src.getbyte(e - 1) == 47
+    end
 
     # The inside of a tag from i, as the fast scan reads it but within to: the position of the '<' or '>' that ends
     # it, or -1 when the tag does not end before to.
@@ -319,7 +516,7 @@ module FastHtmlParser
       comment_end = Parser.find_comment_end(@src, i + 4, to)
       parent = -1
       depth = 0
-      if @stack_top.positive?
+      if @stack_top > 0
         parent = @stack[@stack_top - 1]
         depth = @depth[parent] + 1
       end
@@ -338,37 +535,36 @@ module FastHtmlParser
       comment_end
     end
 
-    def lookup(name, length)
-      return -1 if length > 32
-
-      KEYS[name] || KEYS[name.downcase(:ascii)] || -1
-    end
-
     # Matches the end tag src[tag_start-1 .. gt] to the innermost open tag with that name.
     def end_tag(rules, tag_start, gt)
       src = @src
       from = tag_start + 1
       to = gt
-      if from < to && (src.getbyte(to - 1) <= 32 || src.getbyte(to - 1) >= 0x80)
-        while (n = Chars.space_before(src, to, from)).positive?
-          to -= n
-        end
-      end
-      if from < to && (src.getbyte(from) <= 32 || src.getbyte(from) >= 0x80)
-        while (n = Chars.space_at(src, from, to)).positive?
-          from += n
-        end
-      end
-      return if from == to
-
-      # Resolve the name once, then compare ints instead of a lookup per candidate.
+      # Nearly always the name as it stands is a known tag name.
       name = src.byteslice(from, to - from)
-      key = lookup(name, to - from)
+      key = KEYS[name]
+      unless key
+        if from < to && ((b = src.getbyte(to - 1)) <= 32 || b >= 0x80)
+          while (n = Chars.space_before(src, to, from)) > 0
+            to -= n
+          end
+        end
+        if from < to && ((b = src.getbyte(from)) <= 32 || b >= 0x80)
+          while (n = Chars.space_at(src, from, to)) > 0
+            from += n
+          end
+        end
+        return if from == to
+
+        # Resolve the name once, then compare ints instead of a lookup per candidate.
+        name = src.byteslice(from, to - from)
+        key = KEYS[name] || (to - from <= 32 && KEYS[name.downcase]) || -1
+      end
 
       # Well-formed markup: the end tag closes the innermost open tag, which is on top of the stack. What match_end
       # and truncate_open_list do for it, without the loops.
       j = @last_open
-      if key >= 0 && j >= 0 && @key[j] == key && @stack_top.positive? && @stack[@stack_top - 1] == j
+      if key >= 0 && j >= 0 && @key[j] == key && @stack_top > 0 && @stack[@stack_top - 1] == j
         @inner_ends[j] = tag_start - 2
         @ends[j] = gt
         @stack_top -= 1
@@ -416,9 +612,9 @@ module FastHtmlParser
 
         # Tags left open inside it: if the optional-end-tag rules apply to one of them,
         # scan its part again with the rules (fast mode only; rules mode has applied them).
-        if can_repair && !rules && !@is_xml && @stack_top.positive? && @stack[@stack_top - 1] > j
+        if can_repair && !rules && !@is_xml && @stack_top > 0 && @stack[@stack_top - 1] > j
           above = @stack_top - 1
-          above -= 1 while above.positive? && @stack[above - 1] > j
+          above -= 1 while above > 0 && @stack[above - 1] > j
           target = first_misnested(above, @stack_top)
           if target >= 0
             repair(target, tag_start - 1)
@@ -429,7 +625,7 @@ module FastHtmlParser
         @inner_ends[j] = inner_end
         @ends[j] = gt
 
-        while @stack_top.positive? && @stack[@stack_top - 1] >= j
+        while @stack_top > 0 && @stack[@stack_top - 1] >= j
           @stack_top -= 1
           popped = @key[@stack[@stack_top]]
           @open_p -= 1 if popped == P
@@ -445,37 +641,39 @@ module FastHtmlParser
     end
 
     # Adds the tag src[tag_start-1 .. gt]; returns the position to continue from (gt, or before a raw-text end tag).
-    def start_tag(rules, tag_start, gt, to)
+    # name: the name as the scan read it, nil when it runs into '='.
+    def start_tag(rules, tag_start, gt, to, first, name)
       src = @src
       # The name in the inside of the opening tag (trimmed; "!--" for a comment). It starts at tag_start: the first
-      # char is a letter, '!' or '?'.
-      end_ = gt
-      if src.getbyte(gt - 1) >= 0x80
-        while (n = Chars.space_before(src, end_, tag_start)).positive?
-          end_ -= n
+      # char (first) is a letter, '!' or '?'.
+      last = src.getbyte(gt - 1)
+      if last >= 0x80 || first == 33 || name.nil?
+        end_ = gt
+        if last >= 0x80
+          while (n = Chars.space_before(src, end_, tag_start)) > 0
+            end_ -= n
+          end
         end
-      end
-      if src.getbyte(tag_start) == 33 && tag_start + 3 <= end_ && src.getbyte(tag_start + 1) == 45 &&
-         src.getbyte(tag_start + 2) == 45
-        length = 3
-      else
-        @ss.pos = tag_start
-        length = @ss.skip(NAME)
-        if tag_start + length > end_
-          length = end_ - tag_start
-        elsif tag_start + length < end_ && src.getbyte(tag_start + length) == 62
-          # a '>' inside quotes in the name: the name runs on to whitespace or '/'
-          e = tag_start + length
-          e += 1 while e < end_ && !Chars.space_byte?(src.getbyte(e)) && src.getbyte(e) != 47
+        if first == 33 && tag_start + 3 <= end_ && src.getbyte(tag_start + 1) == 45 && src.getbyte(tag_start + 2) == 45
+          length = 3
+        elsif name.nil?
+          # The name ends at whitespace or '/': <br/> is "br", as <br /> is.
+          e = tag_start
+          e += 1 while e < end_ && !Chars.space_byte?(b = src.getbyte(e)) && b != 47
           length = e - tag_start
+        else
+          length = name.bytesize
+          length = end_ - tag_start if tag_start + length > end_
         end
+        name = src.byteslice(tag_start, length)
+      else
+        length = name.bytesize
       end
       key = -1
       custom_name = Chars::EMPTY
-      if length.positive?
-        name = src.byteslice(tag_start, length)
-        key = lookup(name, length)
-        if key.negative?
+      if length > 0
+        key = KEYS[name] || (length <= 32 && KEYS[name.downcase]) || -1
+        if key < 0
           # Custom names (svg elements, web components, ...): the lower-case name.
           custom_name = Chars.lower(name).freeze
           @custom_open[custom_name] ||= 0
@@ -489,8 +687,8 @@ module FastHtmlParser
           rule = RULES[key]
           if rules
             # a target is open (in well-formed markup it is not)
-            close_in_scope(rule, tag_start - 2, true) if rule.k.any? { |t| @open_by_key[t].positive? }
-          elsif @stack_top.positive?
+            close_in_scope(rule, tag_start - 2, true) if rule.k.any? { |t| @open_by_key[t] > 0 }
+          elsif @stack_top > 0
             # The common case of a left-out end tag is caught right here: the innermost open tag is a target.
             top = @key[@stack[@stack_top - 1]]
             apply_rule_in_fast_mode(rule, tag_start) if top >= 0 && rule.t[top]
@@ -498,7 +696,7 @@ module FastHtmlParser
         end
 
         # A block element ends an open <p>. Usually no <p> is open and this is one compare.
-        if @open_p.positive? && flags & F_CLOSES_P != 0
+        if @open_p > 0 && flags & F_CLOSES_P != 0
           if rules
             close_in_scope(P_RULE, tag_start - 2, true)
           else
@@ -510,7 +708,7 @@ module FastHtmlParser
       # the innermost open tag is the parent
       parent = -1
       depth = 0
-      if @stack_top.positive?
+      if @stack_top > 0
         parent = @stack[@stack_top - 1]
         depth = @depth[parent] + 1
       end
@@ -527,10 +725,9 @@ module FastHtmlParser
       is_void = flags & F_VOID != 0
       self_closing = is_void
       unless self_closing
-        c = src.getbyte(gt - 1)
-        if c == 47
+        if last == 47
           self_closing = true
-        elsif c <= 32
+        elsif last <= 32
           e = gt
           e -= 1 while e > tag_start && Chars.space_byte?(src.getbyte(e - 1))
           self_closing = e > tag_start && src.getbyte(e - 1) == 47
@@ -634,7 +831,7 @@ module FastHtmlParser
           @custom_open[custom] -= 1 if !custom.empty? && @custom_open.key?(custom)
         end
 
-        if end_ >= 0 && !@self_closed[k] && @inner_ends[k].zero?
+        if end_ >= 0 && !@self_closed[k] && @inner_ends[k] == 0
           @inner_ends[k] = end_
           @ends[k] = end_
         end
@@ -665,7 +862,7 @@ module FastHtmlParser
     # that part is scanned again with the rules first.
     def apply_rule_in_fast_mode(rule, tag_start)
       from = scope_start(rule)
-      return if from.negative?
+      return if from < 0
 
       m = first_misnested(from, @stack_top)
       if m >= 0
@@ -682,7 +879,7 @@ module FastHtmlParser
 
     # Ends the tag at stack position from (-1: none) together with everything opened inside it.
     def close_from(from, end_, by_key)
-      return if from.negative?
+      return if from < 0
 
       first = @stack[from]
       while @stack_top > from

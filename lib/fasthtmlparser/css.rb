@@ -694,19 +694,29 @@ module FastHtmlParser
       customs = d.customs
       list = @list
       names = @names
+      # one selector with a known tag name: one int compare per tag
+      single = names && names.size == 1 && names[0].key >= 0 ? names[0].key : nil
       count = d.size
       i = from
       while i < count
         break if ends[i] > end_
 
-        if names
+        if single
+          if keys[i] != single
+            i += 1
+            next
+          end
+        elsif names
           k = keys[i]
           candidate = false
-          names.each do |cp|
-            if cp.key >= 0 ? k == cp.key : k.negative? && customs[i] == cp.name
+          j = 0
+          while j < names.size
+            cp = names[j]
+            if cp.key >= 0 ? k == cp.key : k < 0 && customs[i] == cp.name
               candidate = true
               break
             end
+            j += 1
           end
           unless candidate
             i += 1
@@ -732,7 +742,14 @@ module FastHtmlParser
       # scope: the tag the query was called on (:scope, nil for the document); anchor: the tag a relative selector
       # starts from (:has(> a), or node.css("> li"); nil: the document).
       def matches_list?(list, n, scope, anchor)
-        list.any? { |item| matches_complex?(item, item.c.size - 1, n, scope, anchor) }
+        i = 0
+        while i < list.size
+          item = list[i]
+          return true if matches_complex?(item, item.c.size - 1, n, scope, anchor)
+
+          i += 1
+        end
+        false
       end
 
       # n matches compound i and the part to the left of it matches the tags the combinators lead to.
@@ -777,7 +794,14 @@ module FastHtmlParser
         elsif !element?(n)
           return false
         end
-        cp.s.all? { |s| matches_simple?(s, n, scope, anchor) }
+        simple = cp.s
+        i = 0
+        while i < simple.size
+          return false unless matches_simple?(simple[i], n, scope, anchor)
+
+          i += 1
+        end
+        true
       end
 
       # n stands in the combinator relation to anchor (nil: the document).

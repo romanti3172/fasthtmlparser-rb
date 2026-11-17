@@ -6,6 +6,7 @@ module FastHtmlParser
   # is none. Strings are UTF-8.
   class HtmlNode
     TAG_SYMBOLS = TagNames::NAMES.map(&:to_sym).freeze
+    TEXT_SPECIAL = /[<&\r]/n
 
     # The document the tag belongs to.
     attr_reader :doc
@@ -42,6 +43,17 @@ module FastHtmlParser
       @inner_start = doc.inner_starts[i]
       @inner_end = doc.inner_ends[i]
       @depth = doc.depths[i]
+      @lower_tag = nil
+    end
+
+    # @api private The opening tag ("<name attributes", without the closing '>') in lower case, read once.
+    def lower_tag
+      @lower_tag ||= begin
+        end_ = @inner_start > 0 && @inner_end > 0 ? @inner_start - 1 : @end
+        t = @doc.source_bytes.byteslice(@start, end_ - @start)
+        t.downcase!
+        t.freeze
+      end
     end
 
     def ==(other)
@@ -77,9 +89,17 @@ module FastHtmlParser
 
     # @api private
     def body_bytes
-      return +"".b if @inner_start.negative? || @inner_end <= 0
+      is = @inner_start
+      ie = @inner_end
+      return +"".b if is.negative? || ie <= 0
 
-      Chars.trim_range(@doc.source_bytes, @inner_start, @inner_end + 1)
+      src = @doc.source_bytes
+      first = src.getbyte(is)
+      last = src.getbyte(ie)
+      # nearly always nothing to trim
+      return src.byteslice(is, ie + 1 - is) if first && first > 32 && first < 0xc2 && last > 32 && last < 0x80
+
+      Chars.trim_range(src, is, ie + 1)
     end
 
     # The source of the whole element; "" for tags that are not closed.
@@ -98,6 +118,9 @@ module FastHtmlParser
     # @api private
     def text_bytes
       body = body_bytes
+      # no tags, references or CR: the body is the text
+      return body unless TEXT_SPECIAL.match?(body)
+
       # No child tags and no '<' at all: the body is the text, except in script, style, textarea, title, ...
       if !has_children? && (!body.include?(Text::LT) || Parser.raw_text?(@key))
         return Decode.needs_decoding?(body) ? Decode.decode(body, false) : body
