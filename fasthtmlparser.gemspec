@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
                      "entities, XPath 1.0, CSS selectors, links resolved against the page URL. Pure Ruby, no " \
                      "dependencies."
   spec.homepage = "https://github.com/romanti3172/fasthtmlparser-rb"
-  spec.license = "LicenseRef-z3l-source-available"
+  spec.license = "LicenseRef-z3l-FastHtmlParser"
   spec.required_ruby_version = ">= 3.2"
 
   spec.metadata = {
