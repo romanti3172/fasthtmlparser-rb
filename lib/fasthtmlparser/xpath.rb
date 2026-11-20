@@ -92,6 +92,9 @@ module FastHtmlParser
     E_PATH = 10 # start (expr or nil), absolute, steps; attr: a bare @name
     E_FILTER = 11 # primary, preds
     E_FUNCTION = 12 # fn, args
+    # fn, l (prefix), name, r (suffix), value (needle): contains/starts-with/ends-with(concat(l, @name, r), value),
+    # tested on the attribute in place (prefix and suffix may be empty)
+    E_ATTR_TEST = 13
 
     OP_EQ = 0
     OP_NEQ = 1
@@ -653,6 +656,16 @@ module FastHtmlParser
         !raw.nil? && Attrs.attr_equals?(raw, e.value) != e.negate
       when 9 # E_ATTR_EXISTS
         !attribute_of(node, e.name).nil?
+      when 13 # E_ATTR_TEST
+        # a missing attribute is an empty node-set, whose string-value is ""
+        raw = attribute_of(node, e.name) || EMPTY
+        raw = Decode.decode(raw, true) if Decode.needs_decoding?(raw)
+        value = e.l.empty? && e.r.empty? ? raw : String.new(e.l, encoding: Encoding::BINARY) << raw << e.r
+        case e.fn
+        when "contains" then value.include?(e.value)
+        when "starts-with" then value.start_with?(e.value)
+        else value.end_with?(e.value)
+        end
       else
         to_boolean(eval_expr(e, node, position, size))
       end
@@ -672,7 +685,7 @@ module FastHtmlParser
       case e.op
       when 0, 1 # E_LITERAL, E_NUMBER
         e.value
-      when 2, 3, 4, 8, 9 # E_AND, E_OR, E_COMPARE, E_ATTR_EQUALS, E_ATTR_EXISTS
+      when 2, 3, 4, 8, 9, 13 # E_AND, E_OR, E_COMPARE, E_ATTR_EQUALS, E_ATTR_EXISTS, E_ATTR_TEST
         eval_bool(e, node, position, size)
       when 5 # E_ARITH
         x = eval_number(e.l, node, position, size)
