@@ -621,7 +621,33 @@ module FastHtmlParser
         fail_at!("#{fn}() needs a node-set argument", t.p)
       end
       pos = fn == "position" || fn == "last" || args.any?(&:pos)
-      expr(X::E_FUNCTION, info[2], pos, fn: fn, args: args.freeze)
+      attribute_test(fn, args) || expr(X::E_FUNCTION, info[2], pos, fn: fn, args: args.freeze)
     end
+
+    # contains(@a, 'x'), starts-with(...), ends-with(...), also with the attribute wrapped in literals
+    # (contains(concat(' ', @class, ' '), ' x '), the usual class test), are evaluated on the attribute in place,
+    # without a node-set for every element. nil: a plain function call.
+    def attribute_test(fn, args)
+      return nil unless %w[contains starts-with ends-with].include?(fn) && args[1].op == X::E_LITERAL
+
+      arg = args[0]
+      name = attribute_name(arg)
+      prefix = suffix = EMPTY_BINARY
+      if name.nil?
+        return nil unless arg.op == X::E_FUNCTION && arg.fn == "concat" && arg.args.size == 3 &&
+                          arg.args[0].op == X::E_LITERAL && arg.args[2].op == X::E_LITERAL
+
+        name = attribute_name(arg.args[1])
+        return nil if name.nil?
+
+        prefix = arg.args[0].value.b.freeze
+        suffix = arg.args[2].value.b.freeze
+      end
+      expr(X::E_ATTR_TEST, X::TYPE_BOOLEAN, false, fn: fn, l: prefix, name: name, r: suffix,
+                                                   value: args[1].value.b.freeze)
+    end
+
+    EMPTY_BINARY = "".b.freeze
+    private_constant :EMPTY_BINARY
   end
 end
