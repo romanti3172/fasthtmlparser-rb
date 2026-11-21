@@ -302,7 +302,8 @@ module FastHtmlParser
             p += ss.skip(TAG_BODY) if src.getbyte(p) != 62
             last = p < to ? src.getbyte(p - 1) : 0
             if name && p < to && src.getbyte(p) == 62 && last < 0x80 && (key = KEYS[name] || (name.bytesize <= 32 && KEYS[name.downcase]))
-              flags = is_xml ? 0 : FLAGS[key]
+              # in XML only "?xml" is void here ('!' never takes this path)
+              flags = is_xml ? (c == 63 ? F_VOID : 0) : FLAGS[key]
               if flags & F_RULE == 0 || stack_top == 0 || (top = keys[stack[stack_top - 1]]) < 0 || !RULES[key].t[top]
                 if open_p == 0 || flags & F_CLOSES_P == 0
                   # a known tag that ends no open tag
@@ -720,8 +721,11 @@ module FastHtmlParser
       @inner_starts[index] = gt + 1
       @inner_ends[index] = 0
 
-      # Void elements (<br>, <img>, <meta>, ...) and declarations never contain anything.
-      is_void = flags & F_VOID != 0
+      # Void elements (<br>, <img>, <meta>, ...) never contain anything. Neither does markup named "!..." or "?..."
+      # (<!doctype>, <?xml ...?>, <?php ...?>, <![if IE]>), in HTML and in XML alike: a bogus comment in a browser,
+      # a declaration or processing instruction in XML. first is a letter, '!' or '?' (63), and '!' and '?' sort
+      # before the letters: one compare.
+      is_void = first <= 63 || flags & F_VOID != 0
       self_closing = is_void
       unless self_closing
         if last == 47

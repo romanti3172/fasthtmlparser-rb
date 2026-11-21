@@ -122,7 +122,7 @@ returned as written.
 
 ## Same results as the .NET version
 
-The conformance tests compare the port with z3l.FastHtmlParser 1.4.1 (.NET) on 117 pages: the test fixtures, the
+The conformance tests compare the port with z3l.FastHtmlParser 1.4.1 (.NET) on 121 pages: the test fixtures, the
 broken-markup snippets of the .NET cross-check tests, extra edge cases (entities, raw text, comments, XML, custom
 elements, 600-deep nesting, Unicode whitespace, links of every kind, line breaks), and every fixture with
 `</li> </p> </td> </tr>` left out, plus three copies of each with random end tags dropped, names upper-cased and the
