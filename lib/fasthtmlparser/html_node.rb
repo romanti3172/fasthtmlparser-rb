@@ -7,6 +7,7 @@ module FastHtmlParser
   class HtmlNode
     TAG_SYMBOLS = TagNames::NAMES.map(&:to_sym).freeze
     TEXT_SPECIAL = /[<&\r]/n
+    PRE_KEYS = [TagNames::KEYS["pre"], TagNames::KEYS["listing"], TagNames::KEYS["plaintext"]].freeze
 
     # The document the tag belongs to.
     attr_reader :doc
@@ -109,8 +110,10 @@ module FastHtmlParser
       Chars.u(Chars.trim_range(@doc.source_bytes, @start, @end + 1))
     end
 
-    # The visible text with entities decoded. With child tags: tags, comments and the content of script, style,
-    # noscript, template, noframes, noembed removed, whitespace collapsed; without: the inner text as is (trimmed).
+    # The visible text in one line with entities decoded, as jsoup's text(): tags, comments and the content of script,
+    # style, noscript, template, noframes, noembed removed; <br>, block elements and table cells separate words
+    # ("a<br>b": "a b"), inline tags do not ("a<b>b</b>": "ab"); whitespace, line breaks included, collapsed to one
+    # space and trimmed. Inside <pre> whitespace is kept; script, style, textarea, title, ... are their content as written.
     def text
       Chars.u(text_bytes)
     end
@@ -118,15 +121,44 @@ module FastHtmlParser
     # @api private
     def text_bytes
       body = body_bytes
-      # no tags, references or CR: the body is the text
-      return body unless TEXT_SPECIAL.match?(body)
+      # no tags, references, CR or whitespace to collapse: the body is the text
+      return body unless TEXT_SPECIAL.match?(body) || Text.needs_collapse?(body)
 
-      # No child tags and no '<' at all: the body is the text, except in script, style, textarea, title, ...
-      if !has_children? && (!body.include?(Text::LT) || Parser.raw_text?(@key))
+      leaf = !has_children?
+      # script, style, textarea, title, ... without child tags: their content is text as written
+      if leaf && Parser.raw_text?(@key)
         return Decode.needs_decoding?(body) ? Decode.decode(body, false) : body
       end
 
-      Text.clear_tags(body)
+      # no child tags, no '<' and no whitespace to collapse: the body is the text
+      plain = leaf && !body.include?(Text::LT)
+      return(Decode.needs_decoding?(body) ? Decode.decode(body, false) : body) if plain && !Text.needs_collapse?(body)
+
+      # <pre> and what is in it keep their whitespace (looked up only when there is whitespace to keep)
+      in_pre = in_pre?
+      return(Decode.needs_decoding?(body) ? Decode.decode(body, false) : body) if plain && in_pre
+
+      Text.clear_tags(body, in_pre)
+    end
+
+    # @api private Whether the tag is pre, listing or plaintext, or inside one.
+    def in_pre?
+      return false unless @doc.has_pre?
+
+      keys = @doc.keys
+      parents = @doc.parents
+      i = @index
+      while i >= 0
+        return true if PRE_KEYS.include?(keys[i])
+
+        i = parents[i]
+      end
+      false
+    end
+
+    # @api private Whether the text must be compared as a whole: raw text, or a page with pre.
+    def exact_text_only?
+      (!has_children? && Parser.raw_text?(@key)) || @doc.has_pre?
     end
 
     # The text with the visible line structure kept: <br> and block elements give new lines, p and headings a blank

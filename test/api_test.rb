@@ -10,6 +10,26 @@ class ApiTest < Minitest::Test
   end
 
   # The shortcuts on the books page give what the scraper code of the .NET examples expects.
+  # text is the visible text in one line, as jsoup's text() (the cases of TextOneLineTests in the .NET version).
+  def test_text_is_one_line
+    [
+      ["line1<br>line2", "line1 line2"], ["line1<br><br><br>line2", "line1 line2"], ["line1 <br> line2", "line1 line2"],
+      ["line1<BR/>line2", "line1 line2"], ["<p>a</p><p>b</p>", "a b"], ["<ul><li>a</li><li>b</li></ul>", "a b"],
+      ["<table><tr><td>Price</td><td>100</td></tr></table>", "Price 100"], ["<h1>Title</h1>text", "Title text"],
+      ["a<span>b</span>c", "abc"], ["a<my-widget>b</my-widget>", "ab"], ["a\nb", "a b"], ["a\r\n\t  b", "a b"],
+      ["a<!-- c -->b", "ab"], ["<p>a</p><script>x()</script><p>b</p>", "a b"], ["a &amp; b", "a & b"],
+      ["x<pre>a\n  b</pre>y", "x a\n  b y"]
+    ].each do |html, text|
+      doc = HtmlDocument.parse("<div>#{html}</div>")
+      assert_equal text, doc.find(Query.by(:div)).text, html
+      assert_equal 1, doc.find_all(Query.by(:div).text(text)).size, "text query #{html}"
+    end
+    doc = HtmlDocument.parse("<span>a\n   b</span><pre>c\n  d</pre><textarea>e\n  f</textarea>")
+    assert_equal "a b", doc.find(Query.by(:span)).text
+    assert_equal "c\n  d", doc.find(Query.by(:pre)).text
+    assert_equal "e\n  f", doc.find(Query.by(:textarea)).text
+  end
+
   def test_shortcuts
     doc = HtmlDocument.parse(fixture("books/index.html"), "https://books.toscrape.com/index.html")
     pods = doc.find_all_by_name_class(Tag::ARTICLE, "product_pod")
@@ -90,7 +110,7 @@ class ApiTest < Minitest::Test
     assert_equal "a & b d©2024", doc.css_first("div").text, "&nbsp; is a no-break space"
     assert_equal "a < b", doc.css_first("title").text
     assert_equal " c ", doc.xpath_value("//comment()")
-    assert_equal "onetwo three", Html.to_text("<p>one</p><p>two&nbsp;three</p>")
+    assert_equal "one two three", Html.to_text("<p>one</p><p>two&nbsp;three</p>") # paragraphs separate words, as in jsoup
     assert_equal "one\n\ntwo\nthree\n\nx y", Html.to_text_line_breaks("<p>one</p><p>two<br>three</p><td>x</td><td>y</td>")
     assert_equal "<AB&bogus;", Html.decode("&lt;&#x41;&#66;&bogus;")
   end

@@ -61,7 +61,77 @@ module FastHtmlParser
       end_
     end
 
-    # The text runs of s with tags, comments and invisible content removed, whitespace not yet collapsed.
+    SEPARATOR_NAME = %r{\G</?([a-zA-Z0-9]+)}n
+    PRE_NAME = %r{\G<(/?)([a-zA-Z]+)}n
+    PRE_NAMES = %w[pre listing plaintext].freeze
+    # whitespace to collapse in trimmed text: a line break, tab or other space than ' ', or a space before more whitespace
+    NEEDS_COLLAPSE = Regexp.new("(?! )#{Chars::UNICODE_SPACE}| #{Chars::UNICODE_SPACE}".b, Regexp::NOENCODING)
+    LEADING_SPACE = Regexp.new("\\A#{Chars::UNICODE_SPACE}+".b, Regexp::NOENCODING)
+    TRAILING_SPACE = Regexp.new("#{Chars::UNICODE_SPACE}+\\z".b, Regexp::NOENCODING)
+
+    # Whether the markup at s[i] ('<') is a tag that separates words in the one-line text, as in jsoup's text(): <br>,
+    # a block element or a table cell, opening or closing. Comments, declarations, inline and unknown tags do not.
+    def separates_words?(s, i)
+      m = SEPARATOR_NAME.match(s, i)
+      return false unless m
+
+      key = Parser.lookup_tag(m[1])
+      !key.nil? && key >= 0 && TextLines.separates_words?(key)
+    end
+
+    # Whether trimmed text has whitespace to collapse.
+    def needs_collapse?(s)
+      SPACE_BYTE.match?(s) && NEEDS_COLLAPSE.match?(s)
+    end
+
+    # +1 for an opening pre, listing or plaintext at s[i], -1 for a closing one, 0 otherwise.
+    def pre_tag(s, i)
+      m = PRE_NAME.match(s, i)
+      return 0 unless m && PRE_NAMES.include?(m[2].downcase)
+
+      m[1].empty? ? 1 : -1
+    end
+
+    # The one-line text of s where <pre> keeps its whitespace (in_pre: s itself is in one): the text outside pre
+    # collapsed, inside as written; the rare, slow way.
+    def strip_tags_pre(s, in_pre)
+      pieces = [] # [text, keep whitespace]
+      depth = in_pre ? 1 : 0
+      n = s.bytesize
+      from = 0
+      lt = s.index(LT)
+      while lt
+        unless Parser.markup_start?(s, lt, n)
+          lt = s.index(LT, lt + 1)
+          next
+        end
+        pieces << [s.byteslice(from, lt - from), depth > 0]
+        last = skip_markup(s, lt)
+        if last < 0
+          from = n
+          break
+        end
+        depth = [0, depth + pre_tag(s, lt)].max unless in_pre
+        pieces << [SP, false] if separates_words?(s, lt)
+        from = last + 1
+        lt = s.index(LT, from)
+      end
+      pieces << [s.byteslice(from, n - from), depth > 0] if from < n
+      out = String.new(encoding: Encoding::BINARY)
+      pieces.each do |text, keep|
+        if keep
+          text = text.sub(LEADING_SPACE, "") if out.empty?
+        else
+          text = text.gsub(SPACE_RUNS, SP)
+          text = text.byteslice(1, text.bytesize - 1) if text.start_with?(SP) && (out.empty? || TRAILING_SPACE.match?(out))
+        end
+        out << text
+      end
+      out.sub(TRAILING_SPACE, "")
+    end
+
+    # The text runs of s with tags, comments and invisible content removed, whitespace not yet collapsed; a ' ' for
+    # each tag that separates words (collapsed with the whitespace around it).
     def text_runs(s)
       lt = s.index(LT)
       return s if lt.nil?
@@ -78,6 +148,7 @@ module FastHtmlParser
         last = skip_markup(s, lt)
         return out if last < 0 # an unterminated tag: the rest is markup
 
+        out << SP if separates_words?(s, lt)
         from = last + 1
         lt = s.index(LT, from)
       end
@@ -99,17 +170,22 @@ module FastHtmlParser
       a == 0 && z == t.bytesize ? t : Chars.slice(t, a, z)
     end
 
-    # The visible text of an HTML fragment.
-    def clear_tags(s)
+    PRE_IN_HTML = /<(?:pre|listing|plaintext)\b/ni
+
+    # The visible text of an HTML fragment in one line, as jsoup's text(): <br>, blocks and table cells separate words,
+    # inline tags do not, whitespace collapsed; inside <pre> whitespace is kept.
+    def clear_tags(s, in_pre = false)
       return +"".b if s.empty?
 
-      text = collapse(text_runs(s))
+      text = in_pre || PRE_IN_HTML.match?(s) ? strip_tags_pre(s, in_pre) : collapse(text_runs(s))
       text.include?(Decode::AMP) ? Decode.decode(text, false) : text
     end
 
     # Whether the visible text of the body (value) equals expected; n gives the full text.
     def text?(value, expected, n)
       return false if value.empty? || expected.empty?
+      # <pre> keeps its whitespace in text and raw text is as written: compare with the text itself
+      return n.text_bytes == expected if n.exact_text_only?
 
       # whitespace is collapsed even where text keeps it (a tag without children), as the .NET version compares
       text = collapse(text_runs(value))
@@ -145,6 +221,13 @@ module FastHtmlParser
     KINDS[KEYS["th"]] = BREAK_SPACE
     %w[script style noscript template noframes noembed].each { |t| KINDS[KEYS[t]] = BREAK_SKIP_CONTENT }
     KINDS.freeze
+
+    # Whether the tag (a key of TagNames) separates words in the one-line text of HtmlNode#text, as in jsoup's text():
+    # <br>, block elements, p/h1-h6 and table cells. The same tags as the line breaks here.
+    def self.separates_words?(key)
+      k = KINDS[key]
+      k == BREAK_LINE || k == BREAK_PARAGRAPH || k == BREAK_SPACE
+    end
 
     SPACE_RUNS = Chars::SPACE_RUNS
     SPACE_BYTE = Chars::SPACE_BYTE

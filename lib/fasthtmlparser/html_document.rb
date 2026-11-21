@@ -44,6 +44,15 @@ module FastHtmlParser
       @base = nil
       @base_parsed = false
       @source_utf8 = nil
+      @has_pre = nil
+    end
+
+    # @api private Whether the page has a pre, listing or plaintext, looked up once: most pages have none, and then text
+    # does not look for one around each tag.
+    def has_pre?
+      return @has_pre unless @has_pre.nil?
+
+      @has_pre = HtmlNode::PRE_KEYS.any? { |k| @keys.include?(k) }
     end
 
     # @api private The page source as binary bytes.
