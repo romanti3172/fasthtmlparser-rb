@@ -172,6 +172,7 @@ class ApiTest < Minitest::Test
     assert_raises(CssSelectorError) { CssQuery.compile("::before") }
     e = assert_raises(XPathError) { doc.xpath("//p[") }
     assert_includes e.message, '"//p["'
+    assert_includes e.message, "unexpected end of the expression"
     assert_raises(XPathError) { XPathQuery.compile("$var") }
     assert_raises(ArgumentError) { doc.xpath("//p[unknown()]") }
   end

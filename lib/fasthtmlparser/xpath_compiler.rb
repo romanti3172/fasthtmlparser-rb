@@ -506,7 +506,9 @@ module FastHtmlParser
         absolute = true
         steps = parse_relative_steps(steps, true)
       else
-        fail!("unexpected #{describe(peek(0))}") unless can_start_step?(peek(0))
+        unless can_start_step?(peek(0))
+          fail!(peek(0).k == T_END ? "unexpected end of the expression" : "unexpected #{describe(peek(0))}")
+        end
         steps = parse_relative_steps(steps, false)
       end
       path = expr(X::E_PATH, X::TYPE_NODE_SET, false, start: nil, absolute: absolute, steps: optimize(steps))
